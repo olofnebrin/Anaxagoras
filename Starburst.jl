@@ -4,37 +4,8 @@
     formed in a single starburst. It also contains the needed calculations
     of the half-mass radius and more. """
 
-
-###############################################################
-#######                                                 #######
-#######      S T E L L A R  F E E D B A C K             #######
-#######                                                 #######
-###############################################################
-
-###### POP II STELLAR FEEDBACK ######
-
-Ψ_ion_cII = 3.27e-8     # Direct stellar emission in ionizing band
-Ψ_FUV_cII = 2.40e-8     # Direct stellar emission in FUV band
-Ψ_NUV_cII = 1.31e-8     # Direct stellar emission in NUV band
-Ψ_opt_cII = 6.73e-9     # Direct stellar emission in optical band
-
-# Lyman-α band:
-
-E_Lyα      = 10.2*eV
-Qdot_ionII = 5e46/MSun
-Ψ_Lyα_cII  = (2/3)*Qdot_ionII*E_Lyα/c
-
-###### POP III STELLAR FEEDBACK ######
-
-Ψ_ion_cIII = 2.10e-7     # Direct stellar emission in ionizing band
-Ψ_FUV_cIII = 0.0         # Direct stellar emission in FUV band
-Ψ_NUV_cIII = 0.0         # Direct stellar emission in NUV band
-Ψ_opt_cIII = 0.0         # Direct stellar emission in optical band
-
-# Lyman-α band:
-
-Qdot_ionIII = 5e46/MSun
-Ψ_Lyα_cIII  = 5.02e-8
+include("./CosmologyAndCooling.jl")
+using .CosmologyAndCooling
 
 ###############################################################
 #######                                                 #######
@@ -42,9 +13,12 @@ Qdot_ionIII = 5e46/MSun
 #######                                                 #######
 ###############################################################
 
+μh = 1.23
+μ  = 1.23
+
 function Mdisk(M, z, t)
     """ Mass of the disk (Msun) at a time t (yrs) after
-        gas collapse. Utalizes the self-simimlar solution
+        gas collapse. Utalizes the self-similar solution
         for the gas accretion rate. """
 
     Mdiv = 2.92e6*(((1+z)/10)^(-3/2))
@@ -52,12 +26,12 @@ function Mdisk(M, z, t)
     if M > Mdiv
         # Temperature and sound speed of gas in the halo:
 
-        Th  = min( Tvir(M,z),  T_Lyα )
+        Th  = min( Tvir(M,z),  8000.0 )
         csh = sqrt(kB*Th/(μh*mH))
 
         # Calculation of g
         
-        beta = (1-fB)*((vvir(M,z)/csh)^2) - 2.0
+        β    = (1-fB)*((vvir(M,z)*kms/csh)^2) - 2.0
         y    = log10(β+1.693)^0.52
 
         g    = 0.347*(1.0 + 2.01*exp(-6*y))*sqrt(0.53 + β/(β+2))
@@ -78,7 +52,7 @@ function Mdisk(M, z, t)
 
     # Resulting gas accretion rate (g s^-1):
 
-    Mdot  = g*(vvir(M,z)^3)/G
+    Mdot  = g*((vvir(M,z)*kms)^3)/G
 
     # Disk mass (in Msun):
 
@@ -110,6 +84,21 @@ function Rdisk(M,z,λ,t)
     return Rdisk
 end
 
+function vdisk(M,z,λ,t)
+    """ The disk velocity (cm/s). Note that it is independent
+        of time because of cancellation of time-dependent factors.  """
+
+    # To ensure that Rdisk > 0 in the division:
+
+    t = max( 1.0*yr, t )
+
+    # The disk velocity:
+
+    vdisk = sqrt(G*Mdisk(M,z,t)*Msun/Rdisk(M,z,λ,t))
+
+    return vdisk
+end
+
 function Σdisk0(M, z, λ, t)
     """ The disk surface density (g/cm^2) at the outer
         edge of the disk (R = Rdisk) at time t (yrs). """
@@ -119,11 +108,12 @@ function Σdisk0(M, z, λ, t)
     return Σdisk0
 end
 
+
 function T(z,Z)
     """ The temperature of dense gas in the disk (K) 
         as a function of redshift and gas metallicity Z. """
 
-    T = 200.0
+    T = 8000.0
 
     return T
 end
@@ -136,12 +126,88 @@ function cs(z,Z)
     return sqrt(kB*T(z,Z)/(μ*mH))
 end
 
+function Mach(M,z,λ,Z,t)
+    """ Mach number of disk gas as a function
+        of halo mass M (Msun), redshift z, 
+        gas metallicty (relative to Solar),
+        and time t (yrs). Note that the time-dependence
+        cancels."""
+
+    e_t = 0.1
+
+    t = max(1.0*yr, t)
+
+    x = 2*e_t*((vvir(M,z)*kms)^2)/(pi*G*Σdisk0(M,z,λ,t)*cs(z,Z)*t*yr)
+
+    Mach = sqrt( x^(2/3) + (x/3)^3 )
+
+    return Mach
+end
+
+function Q_Toomre(M,z,λ,Z,t)
+    """ The Toomre parameter for the disk. """
+
+    # Epicycle frequency:
+
+    κ    = sqrt(2)*vdisk(M,z,λ,t)/Rdisk(M,z,λ,t)
+
+    # Gas velocity dispersion:
+
+    σgas = cs(z,Z)*sqrt(1 + (Mach(M,z,λ,Z,t)^2)/3)
+
+    # Toomre parameter:
+
+    Q_Toomre = κ*σgas/(pi*G*Σdisk0(M,z,λ,t))
+
+    return Q_Toomre
+end
+
 ###############################################################
 #######                                                 #######
 #######        S T E L L A R   F E E D B A C K          #######
 #######                                                 #######
 ###############################################################
 
+Z_crit = 1e-5
+
+###### POP II STELLAR FEEDBACK ######
+
+# For Pop II stars we assume the Kroupa IMF (for 0.1-100 Msun)
+# and use the band parameters from FIRE-2:
+
+Ψ_ion_cII  = 3.27e-8     # Direct stellar emission in ionizing band
+k_ionII    = 1.5e6       # Hydrogen opacity in ionizing band (for Pop II SED)
+
+Ψ_FUV_cII  = 2.40e-8     # Direct stellar emission in FUV band
+k_FUV(Z)   = 2.0e3*Z     # Dust opacity in FUV band
+
+Ψ_NUV_cII  = 1.31e-8     # Direct stellar emission in NUV band
+k_NUV(Z)   = 1.8e3*Z     # Dust opacity in NUV band
+
+Ψ_opt_cII  = 6.73e-9     # Direct stellar emission in optical band
+k_opt(Z)   = 180.0*Z     # Dust opacity in optical band
+
+k_IR(Z)    = 5.0*Z       # Rosseland mean opacity in the IR band
+
+# Ionizing photon output and Lyman-α band:
+
+Qdot_ionII = 5e46/Msun
+E_Lyα      = 10.2*eV
+Ψ_Lyα_cII  = (2/3)*Qdot_ionII*E_Lyα/c
+
+###### POP III STELLAR FEEDBACK ######
+
+# For Pop III stars the dust abundance is so low that we 
+# can neglect radiation pressure in non-ionizing bands.
+
+Ψ_ion_cIII = 2.10e-7     # Direct stellar emission in ionizing band
+k_ionIII   = 7.8e5       # Hydrogen opacity in ionizing band (for Pop III SED)
+
+# Ionizing photon output and Lyman-α band:
+
+Qdot_ionIII = 5e46/Msun
+Ψ_Lyα_cIII  = 5.02e-8
+ 
 function Transmission(k_band, Σ0)
     """ The factor exp(-τ_band) for a given band
         as a function of band opacity (k_band) and disk
@@ -158,24 +224,19 @@ function Pdot_m_rad_noion(Σ0, Z)
         from stars. """
 
     if Z < Z_crit
-        FUV    =  0.0
-        NUV    =  0.0
-        OPT    =  0.0
+        Pdot_m_rad_noion = 0.0
     else
-        FUV    =  Ψ_FUV_cII*(1 - Transmission(k_FUVII(Z), Σ0))
-        NUV    =  Ψ_NUV_cII*(1 - Transmission(k_NUVII(Z), Σ0))
-        OPT    =  Ψ_opt_cII*(1 - Transmission(k_optII(Z), Σ0))
+        FUV    =  Ψ_FUV_cII*(1 - Transmission(k_FUV(Z), Σ0))
+        NUV    =  Ψ_NUV_cII*(1 - Transmission(k_NUV(Z), Σ0))
+        OPT    =  Ψ_opt_cII*(1 - Transmission(k_opt(Z), Σ0))
+
+        Pdot_m_rad_noion = FUV + NUV + OPT
     end
-
-    # PUT IT ALL TOGETHER:
-
-    Pdot_m_rad_noion = FUV + NUV + OPT
 
     return Pdot_m_rad_noion
 end
 
 function Pdot_m_rest(Σ0, z, Z)
-
     """ Momentum injection rate per Solar mass formed
         (in cm s^-2) from ionizing radiation, Ly-alpha
         scattering, and stellar winds. """
@@ -183,9 +244,9 @@ function Pdot_m_rest(Σ0, z, Z)
     # CONTRIBUTION FROM IONIZING BAND:
 
     if Z < Z_crit
-        ION = Ψ_ion_cIII*(1 - Transmission(k_ionIII(Z), Σ0))
+        ION = Ψ_ion_cIII*(1 - Transmission(k_ionIII, Σ0))
     else
-        ION = Ψ_ion_cII*(1 - Transmission(k_ionII(Z), Σ0))
+        ION = Ψ_ion_cII*(1 - Transmission(k_ionII, Σ0))
     end
 
     # CONTRIBUTION FROM STELLAR WIND/MASS LOSS:
@@ -241,6 +302,8 @@ function τ_IR(Σ0,Z)
     """ The factor that controls the feedback from multiple
         scattering of IR radiation. """
 
+    η_IR = 0.9
+
     # Calculated value of tau_IR:
 
     tau_IR = η_IR*k_IR(Z)*Pdot_m_rad_noion(Σ0, Z)/(2*pi*G)
@@ -248,11 +311,15 @@ function τ_IR(Σ0,Z)
     return tau_IR
 end
 
+
+
 ###############################################################
 #######                                                 #######
 #######           S T E L L A R   M A S S               #######
 #######                                                 #######
 ###############################################################
+
+ϵff = 1.0
 
 function Mstar(M,z,λ,Z,t)
     """ The stellar mass (Msun) formed by time t (yrs)
@@ -263,27 +330,27 @@ function Mstar(M,z,λ,Z,t)
     # Surface density at the disk outer edge (for
     # convenience):
 
-    Σ0 = Σdisk0(M, z, λ, t)
+    Σ0 = Σdisk0(M,z,λ,t)
 
     # Critical surface density
 
-    Σcrit = (Pdot_m_rad_noion(Σ0,Z) +  Pdot_m_rest(Σ0, z, Z))/(2*pi*G)
+    Σcrit = (Pdot_m_rad_noion(Σ0,Z) +  Pdot_m_rest(Σ0,z,Z))/(2*pi*G)
 
     # tbar (independent of time):
 
-    t_ff  = sqrt(3)*cs(z,Z)*np.sqrt(1 + (Mach(M, z, spin)^2)/3)/(4*G*Σ0)
+    t_ff  = sqrt(3)*cs(z,Z)*sqrt(1 + (Mach(M,z,λ,Z,t)^2)/3)/(4*G*Σ0)
     tbar  = ϵff*t*yr/t_ff
 
     # Convenient definitions:
 
-    τ     = τ_IR(Σ0,Z)
-    Σbar  = Σ0*(1 + τ)/Σcrit
+    τIR   = τ_IR(Σ0,Z)
+    Σbar  = Σ0*(1 + τIR)/Σcrit
     A     = (Σbar+1)*tbar*log(1 + 1/Σbar)/((Σbar+1)*tbar - Σbar)
     B     = tbar*log(tbar)/((tbar - 1)*((Σbar + 1)*tbar - Σbar))
 
     # Only if the disk is Toomre unstable will stars form:
 
-    if Q_Toomre(M,z,λ,Z) < 1
+    if Q_Toomre(M,z,λ,Z,t) < 1
         f_Q = 1.0
     else
         f_Q = 0.0
@@ -291,8 +358,39 @@ function Mstar(M,z,λ,Z,t)
 
     # Put it all together:
 
-    Mstar = f_Q*Σbar*Mdisk(M,z,t)*(A-B)/(1 + τ)
+    Mstar = f_Q*Σbar*Mdisk(M,z,t)*(A-B)/(1 + τIR)
 
     return Mstar
 end
 
+function dMstardt(M,z,λ,Z,t,dt)
+    """ The star formation rate (Msun/yr) during
+        the starburst at time t. """
+
+    if t-dt > 0
+        dMstardt = (Mstar(M,z,λ,Z,t+dt) - Mstar(M,z,λ,Z,t-dt))/(2*dt)
+    else
+        dMstardt = (Mstar(M,z,λ,Z,t+dt) - Mstar(M,z,λ,Z,t))/dt
+
+    end
+
+    return dMstardt
+
+end
+
+function Starburst(M,z,λ,Z)
+    """ The starburst history and properties of the
+        object(s) produced is calculated here. """
+
+    # Time iteration to find the total stellar 
+    # mass produced and the starburst time-scale:
+
+    t = 0.0; dt = 1e3 # Starting time & time-step (yr)
+
+    while Efb < Efb_crit & Pdotfb < Fgrav
+        
+        StellarMass += dMstardt(M,z,λ,Z,t,dt)*dt
+
+    end
+
+end
