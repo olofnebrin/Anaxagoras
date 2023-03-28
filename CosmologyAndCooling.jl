@@ -13,14 +13,16 @@ module CosmologyAndCooling
 #######                                                 #######
 ###############################################################
     
-G       = 6.67e-8          # Gravitational constant (cgs units)
-kB      = 1.38e-16         # Boltzmann constant (erg/K)
-mH      = 1.67e-24         # Mass of a hydrogen atom (g)
-Msun    = 1.989e33         # Solar mass (g)
-pc      = 3.08e18          # Parsec (cm)
-mpc     = 1e6*pc           # Megaparsec (cm)
-kms     = 1e5              # 1 km/s (cm/s)
-yr      = 3.1556926e7      # 1 year (s)
+G       = 6.67e-8;  export G     # Gravitational constant (cgs units)
+c       = 2.998e10; export c     # Speed of light (cm/s)
+kB      = 1.38e-16; export kB    # Boltzmann constant (erg/K)
+mH      = 1.67e-24; export mH    # Mass of a hydrogen atom (g)
+Msun    = 1.989e33; export Msun  # Solar mass (g)
+pc      = 3.08e18; export pc     # Parsec (cm)
+mpc     = 1e6*pc; export mpc     # Megaparsec (cm)
+kms     = 1e5; export kms        # 1 km/s (cm/s)
+eV      = 1.602e-12; export eV   # Electron volt (erg)
+yr      = 3.1556926e7; export yr # 1 year (s)
     
 ###############################################################
 #######                                                 #######
@@ -33,7 +35,7 @@ H0      = h*100*kms/mpc    # Hubble constant (s^-1)
 ΩB      = 0.0493           # Baryon density parameter
 ΩM      = 0.315            # Matter density parameter
 ΩΛ      = 1.0-ΩM           # Dark energy density parameter (we assume flat Universe)
-fB      = ΩB/ΩM            # Universal baryon fraction
+fB      = ΩB/ΩM; export fB # Universal baryon fraction
 T_CMB0  = 2.726            # Present CMB temperature (K)
 Y       = 0.247            # Helium mass fraction
 X       = 1 - Y            # Hydrogen mass fraction
@@ -42,8 +44,8 @@ X       = 1 - Y            # Hydrogen mass fraction
 # Derived quantities: The CMB tempoerature (K), the mean matter density (g/cm^3),
 # and the age of the Universe (yr):
     
-T_CMB(z) = T_CMB0*(1+z)    
-ρM(z)    = 3*ΩM*(H0^2)*((1+z)^3)/(8*pi*G)
+T_CMB(z) = T_CMB0*(1+z); export T_CMB    
+ρM(z)    = 3*ΩM*(H0^2)*((1+z)^3)/(8*pi*G); export ρM
     
 function tuni(z)
     
@@ -57,9 +59,6 @@ function tuni(z)
      return tuni/yr
 
 end
-
-export T_CMB
-export ρM
 
 ###############################################################
 #######                                                 #######
@@ -87,6 +86,21 @@ function vvir(M,z)
 
     return vvir/kms
 end
+
+export vvir
+
+function Tvir(M,z)
+    """ The virial temperature of a halo of mass M (Msun)
+        at redshift z. """
+
+    μh = 1.23
+
+    Tvir = 0.75*μh*mH*((vvir(M,z)*kms)^2)/(2*kB)
+
+    return Tvir
+end
+
+export Tvir
 
 function Mvel(vvir,z)
     """ The halo mass (Msun) as a function of the
